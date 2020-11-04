@@ -277,6 +277,10 @@ static void putstr8(uint8_t **q_ptr, const char *str, int write_len)
         len = strlen(str);
     if (write_len)
         *q++ = len;
+    if (!str) {
+        *q_ptr = q;
+        return;
+    }
     memcpy(q, str, len);
     q     += len;
     *q_ptr = q;
@@ -384,6 +388,12 @@ static int mpegts_write_pmt(AVFormatContext *s, MpegTSService *service)
             break;
         case AV_CODEC_ID_TIMED_ID3:
             stream_type = STREAM_TYPE_METADATA;
+            break;
+        case AV_CODEC_ID_PCM_MULAW:
+            stream_type = 0x91;
+            break;
+        case AV_CODEC_ID_PCM_ALAW:
+            stream_type = 0x90;
             break;
         default:
             stream_type = STREAM_TYPE_PRIVATE_DATA;
@@ -1259,7 +1269,9 @@ static void mpegts_write_pes(AVFormatContext *s, AVStream *st,
             } else if (st->codecpar->codec_type == AVMEDIA_TYPE_AUDIO &&
                        (st->codecpar->codec_id == AV_CODEC_ID_MP2 ||
                         st->codecpar->codec_id == AV_CODEC_ID_MP3 ||
-                        st->codecpar->codec_id == AV_CODEC_ID_AAC)) {
+                        st->codecpar->codec_id == AV_CODEC_ID_AAC ||
+                        st->codec->codec_id == AV_CODEC_ID_PCM_MULAW ||
+                        st->codec->codec_id == AV_CODEC_ID_PCM_ALAW)) {
                 *q++ = 0xc0;
             } else if (st->codecpar->codec_type == AVMEDIA_TYPE_AUDIO &&
                         st->codecpar->codec_id == AV_CODEC_ID_AC3 &&
@@ -1433,7 +1445,8 @@ int ff_check_h264_startcode(AVFormatContext *s, const AVStream *st, const AVPack
             return AVERROR_INVALIDDATA;
         }
         av_log(s, AV_LOG_WARNING, "H.264 bitstream error, startcode missing, size %d", pkt->size);
-        if (pkt->size) av_log(s, AV_LOG_WARNING, " data %08X", AV_RB32(pkt->data));
+        if (pkt->size)
+            av_log(s, AV_LOG_WARNING, " data %08"PRIX32, AV_RB32(pkt->data));
         av_log(s, AV_LOG_WARNING, "\n");
     }
     return 0;
@@ -1447,7 +1460,8 @@ static int check_hevc_startcode(AVFormatContext *s, const AVStream *st, const AV
             return AVERROR_PATCHWELCOME;
         }
         av_log(s, AV_LOG_WARNING, "HEVC bitstream error, startcode missing, size %d", pkt->size);
-        if (pkt->size) av_log(s, AV_LOG_WARNING, " data %08X", AV_RB32(pkt->data));
+        if (pkt->size)
+            av_log(s, AV_LOG_WARNING, " data %08"PRIX32, AV_RB32(pkt->data));
         av_log(s, AV_LOG_WARNING, "\n");
     }
     return 0;
@@ -1565,7 +1579,7 @@ static int mpegts_write_packet_internal(AVFormatContext *s, AVPacket *pkt)
 
         do {
             p = avpriv_find_start_code(p, buf_end, &state);
-            av_log(s, AV_LOG_TRACE, "nal %d\n", state & 0x1f);
+            av_log(s, AV_LOG_TRACE, "nal %"PRId32"\n", state & 0x1f);
             if ((state & 0x1f) == 7)
                 extradd = 0;
         } while (p < buf_end && (state & 0x1f) != 9 &&
@@ -1631,7 +1645,7 @@ static int mpegts_write_packet_internal(AVFormatContext *s, AVPacket *pkt)
 
         do {
             p = avpriv_find_start_code(p, buf_end, &state);
-            av_log(s, AV_LOG_TRACE, "nal %d\n", (state & 0x7e)>>1);
+            av_log(s, AV_LOG_TRACE, "nal %"PRId32"\n", (state & 0x7e)>>1);
             if ((state & 0x7e) == 2*32)
                 extradd = 0;
         } while (p < buf_end && (state & 0x7e) != 2*35 &&
@@ -1945,7 +1959,7 @@ static const AVOption options[] = {
     { "omit_video_pes_length", "Omit the PES packet length for video packets",
       offsetof(MpegTSWrite, omit_video_pes_length), AV_OPT_TYPE_BOOL,
       { .i64 = 1 }, 0, 1, AV_OPT_FLAG_ENCODING_PARAM },
-    { "pcr_period", "PCR retransmission time",
+    { "pcr_period", "PCR retransmission time in milliseconds",
       offsetof(MpegTSWrite, pcr_period), AV_OPT_TYPE_INT,
       { .i64 = PCR_RETRANS_TIME }, 0, INT_MAX, AV_OPT_FLAG_ENCODING_PARAM },
     { "pat_period", "PAT/PMT retransmission time limit in seconds",

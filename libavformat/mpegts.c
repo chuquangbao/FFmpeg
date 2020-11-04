@@ -707,6 +707,8 @@ static const StreamType ISO_types[] = {
     { 0x42, AVMEDIA_TYPE_VIDEO, AV_CODEC_ID_CAVS       },
     { 0xd1, AVMEDIA_TYPE_VIDEO, AV_CODEC_ID_DIRAC      },
     { 0xea, AVMEDIA_TYPE_VIDEO, AV_CODEC_ID_VC1        },
+    { 0x90, AVMEDIA_TYPE_AUDIO, AV_CODEC_ID_PCM_ALAW   },
+    { 0x91, AVMEDIA_TYPE_AUDIO, AV_CODEC_ID_PCM_MULAW  },
     { 0 },
 };
 
@@ -722,6 +724,7 @@ static const StreamType HDMV_types[] = {
     { 0xa2, AVMEDIA_TYPE_AUDIO,    AV_CODEC_ID_DTS               }, /* DTS Express Secondary Audio */
     { 0x90, AVMEDIA_TYPE_SUBTITLE, AV_CODEC_ID_HDMV_PGS_SUBTITLE },
     { 0x92, AVMEDIA_TYPE_SUBTITLE, AV_CODEC_ID_HDMV_TEXT_SUBTITLE },
+    { 0x91, AVMEDIA_TYPE_AUDIO,    AV_CODEC_ID_PCM_MULAW },
     { 0 },
 };
 
@@ -735,6 +738,8 @@ static const StreamType SCTE_types[] = {
 static const StreamType MISC_types[] = {
     { 0x81, AVMEDIA_TYPE_AUDIO, AV_CODEC_ID_AC3 },
     { 0x8a, AVMEDIA_TYPE_AUDIO, AV_CODEC_ID_DTS },
+    { 0x90, AVMEDIA_TYPE_AUDIO, AV_CODEC_ID_PCM_ALAW },
+    { 0x91, AVMEDIA_TYPE_AUDIO, AV_CODEC_ID_PCM_MULAW },
     { 0 },
 };
 
@@ -750,7 +755,9 @@ static const StreamType REGD_types[] = {
     { MKTAG('K', 'L', 'V', 'A'), AVMEDIA_TYPE_DATA,  AV_CODEC_ID_SMPTE_KLV },
     { MKTAG('I', 'D', '3', ' '), AVMEDIA_TYPE_DATA,  AV_CODEC_ID_TIMED_ID3 },
     { MKTAG('V', 'C', '-', '1'), AVMEDIA_TYPE_VIDEO, AV_CODEC_ID_VC1   },
-    { MKTAG('O', 'p', 'u', 's'), AVMEDIA_TYPE_AUDIO, AV_CODEC_ID_OPUS  },
+    { MKTAG('O', 'p', 'u', 's'), AVMEDIA_TYPE_AUDIO, AV_CODEC_ID_OPUS  },    
+    { MKTAG('A', 'L', 'A', 'W'), AVMEDIA_TYPE_AUDIO, AV_CODEC_ID_PCM_ALAW},
+    { MKTAG('U', 'L', 'A', 'W'), AVMEDIA_TYPE_AUDIO, AV_CODEC_ID_PCM_MULAW},
     { 0 },
 };
 
@@ -767,6 +774,8 @@ static const StreamType DESC_types[] = {
     { 0x7b, AVMEDIA_TYPE_AUDIO,    AV_CODEC_ID_DTS          },
     { 0x56, AVMEDIA_TYPE_SUBTITLE, AV_CODEC_ID_DVB_TELETEXT },
     { 0x59, AVMEDIA_TYPE_SUBTITLE, AV_CODEC_ID_DVB_SUBTITLE }, /* subtitling descriptor */
+    { 0x90, AVMEDIA_TYPE_AUDIO,    AV_CODEC_ID_PCM_ALAW },
+    { 0x91, AVMEDIA_TYPE_AUDIO,    AV_CODEC_ID_PCM_MULAW },
     { 0 },
 };
 
@@ -781,6 +790,16 @@ static void mpegts_find_stream_type(AVStream *st,
                 st->codecpar->codec_type = types->codec_type;
                 st->codecpar->codec_id   = types->codec_id;
                 st->internal->need_context_update = 1;
+            }
+            if (st->codecpar->codec_id == AV_CODEC_ID_PCM_MULAW || st->codecpar->codec_id == AV_CODEC_ID_PCM_ALAW)
+            {
+                st->codecpar->channels = 1;
+                st->codecpar->channel_layout = AV_CH_LAYOUT_MONO;
+                st->codecpar->sample_rate = 8000;
+
+                st->codec->channels = 1;
+                st->codec->channel_layout = AV_CH_LAYOUT_MONO;
+                st->codec->sample_rate = 8000;
             }
             st->request_probe        = 0;
             return;
@@ -814,7 +833,7 @@ static int mpegts_set_stream_info(AVStream *st, PESContext *pes,
     st->codecpar->codec_tag = pes->stream_type;
 
     mpegts_find_stream_type(st, pes->stream_type, ISO_types);
-    if (pes->stream_type == 4)
+    if (pes->stream_type == 4 || pes->stream_type == 0x0f)
         st->request_probe = 50;
     if ((prog_reg_desc == AV_RL32("HDMV") ||
          prog_reg_desc == AV_RL32("HDPR")) &&
@@ -2605,7 +2624,7 @@ static void seek_back(AVFormatContext *s, AVIOContext *pb, int64_t pos) {
      * probe buffer usually is big enough. Only warn if the seek failed
      * on files where the seek should work. */
     if (avio_seek(pb, pos, SEEK_SET) < 0)
-        av_log(s, pb->seekable ? AV_LOG_ERROR : AV_LOG_INFO, "Unable to seek back to the start\n");
+        av_log(s, (pb->seekable & AVIO_SEEKABLE_NORMAL) ? AV_LOG_ERROR : AV_LOG_INFO, "Unable to seek back to the start\n");
 }
 
 static int mpegts_read_header(AVFormatContext *s)
@@ -2615,6 +2634,8 @@ static int mpegts_read_header(AVFormatContext *s)
     uint8_t buf[8 * 1024] = {0};
     int len;
     int64_t pos, probesize = s->probesize;
+
+    s->internal->prefer_codec_framerate = 1;
 
     if (ffio_ensure_seekback(pb, probesize) < 0)
         av_log(s, AV_LOG_WARNING, "Failed to allocate buffers for seekback\n");
